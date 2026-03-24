@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minesweeper Grid Editor</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            text-align: center;
+            background: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 10px; }
+        .controls {
+            margin: 15px 0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: center;
+            align-items: center;
+        }
+        button, select, input, textarea {
+            padding: 10px 15px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        button {
+            background: #c0c0c0;
+            border: 2px solid #808080;
+            border-color: #fff #808080 #808080 #fff;
+        }
+        button:hover { background: #e0e0e0; }
+        label { font-weight: bold; margin-right: 5px; }
+
+        #grid {
+            display: grid;
+            gap: 2px;
+            background: #808080;
+            padding: 6px;
+            width: fit-content;
+            margin: 20px auto;
+            box-shadow: 4px 4px 10px rgba(0,0,0,0.4);
+        }
+        .cell {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+            font-family: monospace;
+            background: #c0c0c0;
+            border: 3px solid;
+            border-color: #ffffff #808080 #808080 #ffffff;
+            box-sizing: border-box;
+            cursor: pointer;
+            user-select: none;
+        }
+        #info {
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        textarea {
+            width: 620px;
+            max-width: 90%;
+            height: 140px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 680px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Minesweeper Grid Editor</h1>
+    
+    <div class="controls">
+        <label>Rows:</label>
+        <input type="number" id="rowsInput" value="12" min="5" max="30" style="width:80px">
+
+        <label>Columns:</label>
+        <input type="number" id="colsInput" value="12" min="5" max="40" style="width:80px">
+
+        <button id="newGridBtn">Create New Grid</button>
+        <button id="clearBtn">Clear Bombs</button>
+        <button id="randomBtn">Randomize (~15% bombs)</button>
+        
+        <div style="display: flex; align-items: center; gap: 10px; background:#ddd; padding:10px; border-radius:6px;">
+            <label>Format:</label>
+            <select id="exportFormat">
+                <option value="text">Text (space separated)</option>
+                <option value="csv">CSV (comma separated)</option>
+            </select>
+
+            <label style="margin-left:15px;">
+                <input type="checkbox" id="includeSolution" checked>
+                Include Solution (numbers)
+            </label>
+        </div>
+
+        <button id="exportBtn">Export</button>
+        <button id="importBtn">Import</button>
+    </div>
+
+    <div id="grid"></div>
+
+    <div id="info">
+        Bombs placed: <span id="bombCount">0</span> | 
+        Size: <span id="sizeDisplay">12 × 12</span>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="importModal" class="modal">
+        <div class="modal-content">
+            <h2>Import Board</h2>
+            <p>Paste your exported Text or CSV here:</p>
+            <textarea id="importText" placeholder="Paste exported board..."></textarea>
+            <br><br>
+            <button id="importConfirmBtn">Import This Board</button>
+            <button id="importCancelBtn" style="background:#ddd;">Cancel</button>
+        </div>
+    </div>
+
+    <script>
+        let ROWS = 12;
+        let COLS = 12;
+        let isBomb = [];
+        let cells = [];
+        const gridEl = document.getElementById('grid');
+        const bombCountEl = document.getElementById('bombCount');
+        const sizeDisplayEl = document.getElementById('sizeDisplay');
+        const importModal = document.getElementById('importModal');
+        const importTextArea = document.getElementById('importText');
+
+        function getNumberColor(n) {
+            const colors = ['', '#0000FF', '#008000', '#FF0000', '#000080', '#800000', '#008080', '#000000', '#808080'];
+            return colors[n] || '#000000';
+        }
+
+        function calculateNumbers() {
+            const numbers = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (isBomb[r][c]) continue;
+                    let count = 0;
+                    for (let dr = -1; dr <= 1; dr++) {
+                        for (let dc = -1; dc <= 1; dc++) {
+                            if (dr === 0 && dc === 0) continue;
+                            const nr = r + dr, nc = c + dc;
+                            if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && isBomb[nr][nc]) count++;
+                        }
+                    }
+                    numbers[r][c] = count;
+                }
+            }
+            return numbers;
+        }
+
+        function render() {
+            const numbers = calculateNumbers();
+            let count = 0;
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const cell = cells[r][c];
+                    if (isBomb[r][c]) {
+                        cell.textContent = '💣';
+                        cell.style.backgroundColor = '#ff6666';
+                        cell.style.color = '#fff';
+                    } else {
+                        const n = numbers[r][c];
+                        cell.textContent = n > 0 ? n : '';
+                        cell.style.backgroundColor = '#c0c0c0';
+                        cell.style.color = getNumberColor(n);
+                    }
+                }
+                count += isBomb[r].filter(b => b).length;
+            }
+            bombCountEl.textContent = count;
+        }
+
+        function handleClick(e) {
+            const r = parseInt(e.target.dataset.row);
+            const c = parseInt(e.target.dataset.col);
+            isBomb[r][c] = !isBomb[r][c];
+            render();
+        }
+
+        function createGrid() {
+            gridEl.innerHTML = '';
+            gridEl.style.gridTemplateColumns = `repeat(${COLS}, 32px)`;
+            gridEl.style.gridTemplateRows = `repeat(${ROWS}, 32px)`;
+
+            cells = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+            isBomb = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+                    cell.addEventListener('click', handleClick);
+                    gridEl.appendChild(cell);
+                    cells[r][c] = cell;
+                }
+            }
+            sizeDisplayEl.textContent = `${ROWS} × ${COLS}`;
+            render();
+        }
+
+        function createNewGrid() {
+            const newRows = parseInt(document.getElementById('rowsInput').value);
+            const newCols = parseInt(document.getElementById('colsInput').value);
+            if (isNaN(newRows) || isNaN(newCols) || newRows < 5 || newRows > 30 || newCols < 5 || newCols > 40) {
+                alert("Rows: 5–30 | Columns: 5–40");
+                return;
+            }
+            ROWS = newRows;
+            COLS = newCols;
+            createGrid();
+        }
+
+        function clearBombs() {
+            isBomb = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+            render();
+        }
+
+        function randomizeBombs() {
+            isBomb = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+            const target = Math.floor(ROWS * COLS * 0.15);
+            let placed = 0;
+            while (placed < target) {
+                const r = Math.floor(Math.random() * ROWS);
+                const c = Math.floor(Math.random() * COLS);
+                if (!isBomb[r][c]) {
+                    isBomb[r][c] = true;
+                    placed++;
+                }
+            }
+            render();
+        }
+
+        function exportBoard() {
+            const isCSV = document.getElementById('exportFormat').value === 'csv';
+            const includeSolution = document.getElementById('includeSolution').checked;
+            const numbers = calculateNumbers();
+            let text = `Minesweeper ${ROWS}×${COLS}\n\n`;
+
+            const separator = isCSV ? ',' : ' ';
+
+            for (let r = 0; r < ROWS; r++) {
+                let rowStr = '';
+                for (let c = 0; c < COLS; c++) {
+                    if (isBomb[r][c]) {
+                        rowStr += '*' + separator;
+                    } else if (includeSolution) {
+                        const n = numbers[r][c];
+                        rowStr += (n > 0 ? n : '.') + separator;
+                    } else {
+                        rowStr += '.' + separator;
+                    }
+                }
+                text += rowStr.slice(0, -1) + '\n';   // remove last separator
+            }
+
+            navigator.clipboard.writeText(text).then(() => {
+                const mode = includeSolution ? "Bombs + Solution" : "Bombs Only";
+                const fmt = isCSV ? "CSV" : "Text";
+                alert(`✅ Exported ${ROWS}×${COLS} (${mode} as ${fmt}) to clipboard!`);
+            }).catch(() => prompt('Copy manually:', text));
+        }
+
+        function importBoard() {
+            const text = importTextArea.value.trim();
+            if (!text) {
+                alert("Please paste something first!");
+                return;
+            }
+
+            const lines = text.split('\n')
+                .map(l => l.trim())
+                .filter(l => l.length > 0 && !l.startsWith('Minesweeper'));
+
+            if (lines.length === 0) {
+                alert("No valid data found.");
+                return;
+            }
+
+            const detectedRows = lines.length;
+            const firstTokens = lines[0].split(/[\s,]+/).filter(t => t !== '');
+            const detectedCols = firstTokens.length;
+
+            if (detectedRows !== ROWS || detectedCols !== COLS) {
+                if (!confirm(`Detected size: ${detectedRows}×${detectedCols}\nCurrent grid: ${ROWS}×${COLS}\n\nResize grid and import?`)) return;
+                ROWS = detectedRows;
+                COLS = detectedCols;
+                document.getElementById('rowsInput').value = ROWS;
+                document.getElementById('colsInput').value = COLS;
+                createGrid();
+            }
+
+            isBomb = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+
+            for (let r = 0; r < ROWS && r < lines.length; r++) {
+                const tokens = lines[r].split(/[\s,]+/).filter(t => t !== '');
+                for (let c = 0; c < COLS && c < tokens.length; c++) {
+                    if (tokens[c].trim() === '*') {
+                        isBomb[r][c] = true;
+                    }
+                }
+            }
+
+            importModal.style.display = 'none';
+            render();
+            alert("✅ Board imported successfully!");
+        }
+
+        // Initialize
+        window.onload = function() {
+            document.getElementById('newGridBtn').onclick = createNewGrid;
+            document.getElementById('clearBtn').onclick = clearBombs;
+            document.getElementById('randomBtn').onclick = randomizeBombs;
+            document.getElementById('exportBtn').onclick = exportBoard;
+            document.getElementById('importBtn').onclick = () => {
+                importTextArea.value = '';
+                importModal.style.display = 'flex';
+            };
+            document.getElementById('importConfirmBtn').onclick = importBoard;
+            document.getElementById('importCancelBtn').onclick = () => importModal.style.display = 'none';
+
+            importModal.addEventListener('click', e => {
+                if (e.target === importModal) importModal.style.display = 'none';
+            });
+
+            createGrid();
+        };
+    </script>
+</body>
+</html>
